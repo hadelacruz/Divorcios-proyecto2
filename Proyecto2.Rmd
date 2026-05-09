@@ -1,0 +1,416 @@
+---
+title: "Proyecto 2: Modelos Predictivos sobre Divorcios en Guatemala"
+author: "Grupo 4: Dilary Sarahí, Sofía López, Fabian Prado, Humberto de la Cruz, Daniel Juárez"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    number_sections: true
+---
+
+**Repositorio: https://github.com/hadelacruz/Divorcios-proyecto2**
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+
+library(haven)
+library(dplyr)
+library(purrr)
+library(janitor)
+library(stringr)
+library(knitr)
+library(ggplot2)
+library(gridExtra)
+```
+
+```{r carga-datos, include=FALSE}
+ruta <- "data/"
+archivos <- list.files(path = ruta, pattern = "\\.sav$", full.names = TRUE)
+
+leer_divorcios <- function(archivo) {
+  datos <- read_sav(archivo) %>% janitor::clean_names()
+  anio_archivo <- as.numeric(str_extract(archivo, "\\d{4}"))
+
+  if (!"anioocu" %in% names(datos)) {
+    datos <- datos %>% mutate(anioocu = anio_archivo)
+  }
+
+  if ("puehom" %in% names(datos)) {
+    datos <- datos %>% mutate(pueblo_h = as.character(as_factor(puehom)))
+  } else if ("pperhom" %in% names(datos)) {
+    datos <- datos %>% mutate(pueblo_h = as.character(as_factor(pperhom)))
+  }
+
+  if ("puemuj" %in% names(datos)) {
+    datos <- datos %>% mutate(pueblo_m = as.character(as_factor(puemuj)))
+  } else if ("ppermuj" %in% names(datos)) {
+    datos <- datos %>% mutate(pueblo_m = as.character(as_factor(ppermuj)))
+  }
+
+  cols_char <- c("ciuohom", "ciuomuj")
+  datos[cols_char[cols_char %in% names(datos)]] <- lapply(
+    datos[cols_char[cols_char %in% names(datos)]], as.character
+  )
+
+  return(datos)
+}
+
+divorcios <- map_df(archivos, leer_divorcios)
+
+divorcios_limpio <- divorcios %>%
+  mutate(
+    anioocu = coalesce(anioocu, anoocu),
+    pueblo_hom = case_when(
+      str_detect(pueblo_h, "Ladino|Mestizo|ladino|mestizo") ~ "Ladino / Mestizo",
+      str_detect(pueblo_h, "Maya|maya")                     ~ "Maya",
+      str_detect(pueblo_h, "Xinka|Xinca|xinka|xinca")       ~ "Xinka",
+      str_detect(pueblo_h, "Garifuna|Garífuna")              ~ "Garífuna",
+      str_detect(pueblo_h, "Ignorado|ignorado")              ~ "Ignorado",
+      TRUE ~ str_to_title(pueblo_h)
+    ),
+    pueblo_muj = case_when(
+      str_detect(pueblo_m, "Ladino|Mestizo|ladino|mestizo") ~ "Ladino / Mestizo",
+      str_detect(pueblo_m, "Maya|maya")                     ~ "Maya",
+      str_detect(pueblo_m, "Xinka|Xinca|xinka|xinca")       ~ "Xinka",
+      str_detect(pueblo_m, "Garifuna|Garífuna")              ~ "Garífuna",
+      str_detect(pueblo_m, "Ignorado|ignorado")              ~ "Ignorado",
+      TRUE ~ str_to_title(pueblo_m)
+    ),
+    edadhom = ifelse(edadhom > 100, NA, edadhom),
+    edadmuj = ifelse(edadmuj > 100, NA, edadmuj)
+  ) %>%
+  select(-any_of(c("anoocu", "puehom", "pperhom", "puemuj", "ppermuj",
+                   "pueblo_h", "pueblo_m")))
+```
+
+---
+
+# Variable Respuesta
+
+## Selección y Justificación
+
+A partir del análisis exploratorio realizado sobre los registros de divorcios en Guatemala publicados por el INE, se identificaron patrones demográficos y socioeconómicos relevantes que orientan la elección de la variable respuesta. Con base en esos hallazgos, se determinó como **variable respuesta el nivel educativo del hombre** (`eschom`), una variable **cualitativa de tipo categórica ordinal**, con las siguientes categorías posibles:
+
+- Ninguno
+- Primaria
+- Básico
+- Diversificado
+- Universitario
+- Postgrado
+
+El problema se plantea como uno de **clasificación multiclase**: dado un conjunto de características de una pareja divorciada (edad del hombre, edad de la mujer, nivel educativo de la mujer, departamento donde ocurrió el divorcio, etnia y año del evento), se busca **predecir el nivel educativo del hombre** al momento del divorcio.
+
+## Características de la Variable
+
+```{r descripcion-vr, include=FALSE}
+divorcios_modelo <- divorcios_limpio %>%
+  mutate(eschom = as_factor(eschom),
+         escmuj = as_factor(escmuj)) %>%
+  filter(!is.na(edadhom), !is.na(edadmuj),
+         eschom != "Ignorado", escmuj != "Ignorado") %>%
+  select(eschom, escmuj, edadhom, edadmuj, depocu, pueblo_hom, anioocu)
+
+frec_vr <- divorcios_modelo %>%
+  count(eschom) %>%
+  mutate(Porcentaje = round(n / sum(n) * 100, 2)) %>%
+  rename(`Nivel Educativo (Hombre)` = eschom, Frecuencia = n)
+
+kable(frec_vr,
+      caption = "Distribución de la Variable Respuesta: Nivel Educativo del Hombre")
+```
+
+```{r grafico-vr, include=FALSE}
+ggplot(divorcios_modelo, aes(x = eschom, fill = eschom)) +
+  geom_bar() +
+  labs(
+    title    = "Distribución del Nivel Educativo del Hombre (Variable Respuesta)",
+    subtitle = "Registros de divorcios en Guatemala — INE",
+    x        = "Nivel Educativo",
+    y        = "Frecuencia"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+## Justificación de la Elección
+
+La elección de `eschom` como variable respuesta se fundamenta en los siguientes hallazgos del análisis exploratorio:
+
+1. **Relación con la edad**: El análisis exploratorio demostró que existe una relación positiva y progresiva entre el nivel educativo y la edad al momento del divorcio, tanto para hombres como para mujeres. Esta asociación sugiere que el nivel educativo es diferenciable y predecible a partir de otras variables demográficas disponibles en el dataset.
+
+2. **Relevancia social**: Predecir el nivel educativo dentro de un perfil de divorcio permite comprender mejor los factores socioeconómicos que diferencian a los grupos de personas divorciadas en Guatemala, con potencial utilidad para el diseño de políticas públicas en educación y familia.
+
+3. **Disponibilidad de predictores**: El dataset cuenta con variables que teóricamente se relacionan con la escolaridad: edad de ambos cónyuges, nivel educativo de la mujer, etnia, departamento y año del evento. Esto garantiza que el modelo tenga insumos suficientes para aprender patrones.
+
+4. **Problema no trivial**: A diferencia de otras variables del dataset —como el año o el departamento—, el nivel educativo presenta una distribución con varias categorías de peso significativo, lo que hace que el problema de clasificación sea retador y que no pueda resolverse con un modelo trivial.
+
+5. **Variable categórica ordinal**: Al ser ordinal, el nivel educativo posee un orden inherente (Ninguno < Primaria < Básico < Diversificado < Universitario < Postgrado), lo que añade riqueza interpretativa a los modelos y permite explorar si los algoritmos capturan dicha estructura.
+
+---
+
+# Antecedentes
+
+## Predicción de la estabilidad marital mediante aprendizaje automático
+
+Uno de los antecedentes más directamente relacionados con este proyecto es el de **Mohammadinasab et al. (2023)**, titulado *"Marital Stability and Divorce Prediction Among Couples: A Machine Learning Approach"*, publicado en las memorias del *International Conference on Extreme Learning Machine* (Springer). Este estudio examinó factores significativos para predecir la estabilidad matrimonial en parejas iraníes utilizando cuatro algoritmos de aprendizaje automático: SVM, regresión logística, árbol de decisión y Random Forest. Los autores utilizaron un conjunto de datos con variables demográficas —incluyendo edad, nivel educativo y región geográfica de los cónyuges— y aplicaron ajuste de hiperparámetros a cada modelo. Tras el ajuste, SVM y Random Forest lograron una exactitud superior al 89% en la tarea de clasificación. Este trabajo es particularmente relevante porque trabaja directamente con datos de divorcios, utiliza variables demográficas comparables a las del dataset del INE de Guatemala, e incluye el nivel educativo como uno de los predictores clave del perfil matrimonial.
+
+> Mohammadinasab, H., et al. (2023). Marital Stability and Divorce Prediction Among Couples: A Machine Learning Approach. En: *Proceedings of ELM 2021*, pp. 68–83. Springer, Cham. https://link.springer.com/chapter/10.1007/978-3-031-21678-7_7
+
+## Predicción del prospecto de divorcio con modelos de ensamble
+
+**Satu et al. (2022)**, en su trabajo *"Predicting Divorce Prospect Using Ensemble Learning: Support Vector Machine, Linear Model, and Neural Network"*, publicado en *PubMed Central*, propusieron un enfoque de ensamble combinando SVM, un clasificador lineal y redes neuronales (perceptrón multicapa) para predecir la probabilidad de divorcio a partir de datos de encuestas con variables socioeconómicas. Los autores aplicaron validación cruzada de 5 pliegues y evaluaron el rendimiento mediante exactitud, sensibilidad y especificidad. El modelo de perceptrón multicapa alcanzó una exactitud de 0.98, mientras que SVM también mostró desempeño competitivo. Adicionalmente, realizaron un análisis exploratorio de los datos del divorcio (*DEDA*) que identificó los principales factores causales, entre los que figuró el nivel educativo de los cónyuges. Este antecedente es relevante porque demuestra que los modelos supervisados de clasificación aplicados a datos de divorcio con variables socioeconómicas logran resultados de alta precisión cuando el preprocesamiento y el ajuste de hiperparámetros son adecuados.
+
+> Satu, M. S., Riyad, M. M. H., & Rony, M. A. T. (2022). Predicting Divorce Prospect Using Ensemble Learning: Support Vector Machine, Linear Model, and Neural Network. *PubMed Central*. https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9293523/
+
+## Predicción del nivel educativo individual mediante aprendizaje automático
+
+**Takkavatakarn et al. (2024)**, en el artículo *"Comparison of predicting cardiovascular disease hospitalization using individual, ZIP code-derived, and machine learning model-predicted educational attainment in New York City"*, publicado en *PLOS ONE*, abordaron el problema de predecir el nivel educativo individual a partir de variables sociodemográficas rutinarias (género, grupo étnico, edad y ubicación geográfica). Aunque el contexto principal del estudio es de salud pública, el componente central del trabajo consistió en entrenar modelos de aprendizaje automático para clasificar el nivel educativo de cada persona como variable intermedia. Los modelos de ML lograron una concordancia del 67% con el nivel educativo real reportado, frente al 47% obtenido mediante estimación por zona geográfica. Este antecedente demuestra que predecir el nivel educativo a partir de variables demográficas —como se propone en este proyecto— es un problema abordable con técnicas de aprendizaje automático y que variables como la edad y la etnia aportan información predictiva relevante.
+
+> Takkavatakarn, K., Dai, Y., Wen, H. H., Kauffman, J., Charney, A., Coca, S. G., Nadkarni, G. N., & Chan, L. (2024). Comparison of predicting cardiovascular disease hospitalization using individual, ZIP code-derived, and machine learning model-predicted educational attainment in New York City. *PLOS ONE*. https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10852236/
+
+## Random Forest aplicado a determinantes sociales en América Latina
+
+**Sanchez-Pinto et al. (2023)**, en *"Understanding the social determinants of child mortality in Latin America over the last two decades: a machine learning approach"*, publicado en *Scientific Reports*, aplicaron Random Forest para analizar la importancia de determinantes sociales —incluyendo el nivel educativo de la población— sobre tasas de mortalidad en municipios de Brasil, Ecuador y México. El estudio utilizó datos administrativos históricos similares en estructura a los registros del INE de Guatemala, particionados en 70% entrenamiento y 30% prueba. Los resultados señalaron que el nivel educativo figuró consistentemente entre las variables más importantes en los modelos de Random Forest. Este trabajo establece un precedente metodológico sólido para el uso de Random Forest con datos de registros administrativos latinoamericanos donde la educación es una variable central.
+
+> Sanchez-Pinto, L. N., et al. (2023). Understanding the social determinants of child mortality in Latin America over the last two decades: a machine learning approach. *Scientific Reports*. https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10682478/
+
+## Aprendizaje automático en grandes conjuntos de datos sociales
+
+**Sirven y Debrand (2022)**, en *"Applying machine learning to social datasets: a study of migration in southwestern Bangladesh using random forests"* (*Regional Environmental Change*, Springer), demostraron el potencial de Random Forest y árboles de decisión para identificar patrones en grandes conjuntos de datos provenientes de registros administrativos y encuestas sociales con variables mixtas. Los autores destacan que estos algoritmos manejan eficientemente variables categóricas y numéricas simultáneamente, no requieren supuestos distribucionales estrictos y producen medidas de importancia de variables interpretables. Este trabajo refuerza la idoneidad de los enfoques basados en árboles para datos del tipo que se trabaja en este proyecto.
+
+> Sirven, N., & Debrand, T. (2022). Applying machine learning to social datasets: a study of migration in southwestern Bangladesh using random forests. *Regional Environmental Change*, 22. Springer. https://link.springer.com/article/10.1007/s10113-022-01915-1
+
+## Síntesis de los antecedentes
+
+La revisión de los antecedentes permite extraer las siguientes conclusiones orientadoras para este proyecto:
+
+- Predecir características socioeconómicas de personas divorciadas —incluyendo el nivel educativo— a partir de variables demográficas y de registros civiles es un problema que ha sido abordado con éxito mediante técnicas de aprendizaje automático en contextos similares al guatemalteco.
+- Random Forest y SVM son los algoritmos que reportan de manera más consistente los mejores resultados en clasificación con variables mixtas y datos de tipo administrativo.
+- Los árboles de decisión ofrecen la mayor interpretabilidad y son ampliamente utilizados como modelo de referencia antes de escalar a enfoques de ensamble.
+- El desbalance de clases es un desafío frecuente en este tipo de datasets y debe atenderse mediante técnicas de remuestreo o pesos de clase antes de entrenar los modelos.
+- La literatura latinoamericana confirma que el nivel educativo está asociado a patrones de divorcio diferenciados, lo que respalda la existencia de señal estadística suficiente para el modelado predictivo.
+
+---
+
+# Selección de Algoritmos
+
+## Algoritmos Candidatos Evaluados
+
+Con base en los antecedentes estudiados y las características del problema —clasificación multiclase con variables categóricas y numéricas, posible desbalance de clases, y dataset de tamaño mediano (~33,000 registros)— se evaluaron los siguientes algoritmos:
+
+```{r tabla-algoritmos, echo=FALSE}
+algoritmos <- data.frame(
+  Algoritmo = c(
+    "Regresión Logística Multinomial",
+    "Árbol de Decisión",
+    "Random Forest",
+    "K-Nearest Neighbors (KNN)",
+    "Support Vector Machine (SVM)",
+    "Naive Bayes",
+    "Red Neuronal Artificial"
+  ),
+  Ventajas = c(
+    "Interpretable, sirve como baseline, maneja variables mixtas",
+    "Muy interpretable, reglas explícitas, rápido de entrenar",
+    "Alta precisión, robusto a outliers, extrae importancia de variables, maneja desbalance",
+    "Simple, no paramétrico, flexible con distintos tipos de datos",
+    "Alta precisión con ajuste de kernel, versátil en diferentes espacios de decisión",
+    "Muy rápido, funciona bien con variables categóricas",
+    "Captura no linealidades complejas, alta capacidad de generalización"
+  ),
+  Desventajas = c(
+    "Asume linealidad entre predictores y log-odds, precisión moderada",
+    "Propenso a sobreajuste, inestable ante pequeños cambios en los datos",
+    "Menor interpretabilidad individual, mayor costo computacional",
+    "Sensible al desbalance de clases y a la escala, lento con datasets grandes",
+    "Costoso computacionalmente en datasets grandes, requiere normalización estricta",
+    "Asume independencia entre predictores, raramente cumplida en datos sociales",
+    "Caja negra, requiere mayor volumen de datos y amplio ajuste de hiperparámetros"
+  )
+)
+
+kable(algoritmos, caption = "Evaluación de Algoritmos Candidatos para Clasificación del Nivel Educativo")
+```
+
+## Algoritmos Seleccionados
+
+Con base en la revisión de antecedentes y el análisis de las características del problema, se seleccionan los siguientes **tres algoritmos** para el desarrollo de modelos predictivos:
+
+### 1. Random Forest
+
+Random Forest es un método de ensamble basado en la construcción de múltiples árboles de decisión entrenados sobre subconjuntos aleatorios del conjunto de datos y de las variables predictoras, cuyas predicciones se combinan mediante votación mayoritaria. Esta estrategia reduce significativamente la varianza en comparación con un árbol individual y hace al modelo más robusto ante valores atípicos y ruido.
+
+Para el problema de predecir el nivel educativo del hombre en registros de divorcios, Random Forest resulta especialmente adecuado porque el dataset contiene variables de naturaleza mixta —numéricas como la edad y categóricas como el departamento o la etnia— y porque la variable respuesta presenta probable desbalance entre categorías. Adicionalmente, este algoritmo permite extraer la importancia de cada variable predictora, lo que aporta interpretabilidad sobre cuáles características demográficas son más determinantes para distinguir el perfil educativo dentro del contexto de divorcio en Guatemala.
+
+### 2. Árbol de Decisión
+
+Un árbol de decisión construye un modelo de clasificación dividiendo recursivamente el espacio de predictores mediante reglas del tipo "si/entonces", eligiendo en cada nodo la variable y el umbral que mejor separan las clases según algún criterio de impureza (Gini o entropía). El resultado es un modelo visualmente interpretable del que pueden extraerse reglas explícitas sobre los perfiles educativos.
+
+En el contexto de este proyecto, el árbol de decisión es valioso como modelo interpretable: permite identificar, por ejemplo, qué combinaciones de edad, etnia y departamento caracterizan a los hombres divorciados con nivel universitario versus nivel primaria. Su inclusión también permite evaluar si la ganancia en precisión que aporta Random Forest justifica la pérdida de interpretabilidad, análisis relevante en proyectos aplicados a datos sociales con implicaciones de política pública.
+
+### 3. Regresión Logística Multinomial
+
+La regresión logística multinomial es una extensión de la regresión logística binaria para el caso en que la variable respuesta tiene más de dos categorías. El modelo estima la probabilidad de pertenencia a cada clase mediante funciones softmax, tomando una categoría como referencia y calculando coeficientes para cada predictor en relación con cada una de las demás clases.
+
+Su inclusión responde a su condición de modelo estadístico de referencia (*baseline*) en problemas de clasificación multiclase con datos sociodemográficos. Al producir coeficientes interpretables, permite cuantificar la dirección y magnitud de la relación entre cada variable predictora —como la edad del hombre o el nivel educativo de la mujer— y la probabilidad de pertenecer a cada categoría educativa. Esto facilita la comparación rigurosa entre modelos y aporta una perspectiva estadística complementaria a los enfoques más complejos.
+
+## Comparación Resumida de los Tres Algoritmos Seleccionados
+
+```{r tabla-seleccionados, echo=FALSE}
+seleccionados <- data.frame(
+  Algoritmo = c(
+    "Random Forest",
+    "Árbol de Decisión",
+    "Regresión Logística Multinomial"
+  ),
+  Rol = c(
+    "Modelo principal",
+    "Modelo interpretable / comparación",
+    "Baseline estadístico"
+  ),
+  `Paquete en R` = c(
+    "ranger / randomForest",
+    "rpart",
+    "nnet (multinom)"
+  ),
+  `Principal fortaleza` = c(
+    "Alta precisión, maneja variables mixtas y desbalance de clases",
+    "Reglas explícitas e interpretables, bajo costo computacional",
+    "Coeficientes interpretables, referencia comparativa rigurosa"
+  )
+)
+
+kable(seleccionados, caption = "Algoritmos Seleccionados para el Proyecto 2")
+```
+
+Los tres algoritmos serán entrenados con el mismo conjunto de entrenamiento y evaluados sobre el mismo conjunto de prueba, usando como métricas principales la exactitud global (*accuracy*), el F1-score por clase y la matriz de confusión, dado que se trata de un problema de clasificación multiclase con probable desbalance entre categorías educativas.
+
+---
+
+# Conjuntos de Entrenamiento y Prueba
+
+## Preparación del conjunto de datos para modelado
+
+Antes de realizar la partición, se construyó el dataset de modelado definitivo a partir del conjunto limpio, seleccionando únicamente las observaciones y variables relevantes para el problema: se eliminaron los registros con valores ausentes en las variables predictoras o en la variable respuesta, y se excluyeron los casos etiquetados como "Ignorado" en las variables de escolaridad, ya que no aportan información clasificable.
+
+```{r datos-modelo, include=FALSE}
+library(caret)
+
+set.seed(42)
+
+divorcios_modelo <- divorcios_limpio %>%
+  mutate(
+    eschom    = as_factor(eschom),
+    escmuj    = as_factor(escmuj),
+    depocu    = as_factor(depocu),
+    pueblo_hom = as.factor(pueblo_hom)
+  ) %>%
+  filter(
+    !is.na(edadhom), !is.na(edadmuj),
+    !is.na(eschom),  !is.na(escmuj),
+    eschom != "Ignorado", escmuj != "Ignorado"
+  ) %>%
+  select(eschom, escmuj, edadhom, edadmuj, depocu, pueblo_hom, anioocu)
+
+cat("Total de registros disponibles para modelado:", nrow(divorcios_modelo))
+```
+
+## Método de partición
+
+Se utilizó una **partición aleatoria estratificada** con una proporción de **70% para entrenamiento y 30% para prueba**. La estratificación se realizó sobre la variable respuesta (`eschom`) para garantizar que la distribución proporcional de cada nivel educativo se conserve en ambos subconjuntos, evitando que alguna categoría quede subrepresentada en el conjunto de prueba por azar.
+
+Esta proporción 70/30 es ampliamente utilizada en la literatura de aprendizaje automático para datasets de tamaño mediano (entre 10,000 y 100,000 registros), ya que provee suficientes datos para que el modelo aprenda los patrones durante el entrenamiento y un conjunto de prueba lo bastante grande para que las métricas de evaluación sean estadísticamente representativas.
+
+
+```{r particion, include=FALSE}
+indice_train <- createDataPartition(
+  y     = divorcios_modelo$eschom,
+  p     = 0.70,
+  list  = FALSE
+)
+
+datos_train <- divorcios_modelo[ indice_train, ]
+datos_test  <- divorcios_modelo[-indice_train, ]
+
+cat("Registros en entrenamiento:", nrow(datos_train), 
+    sprintf("(%.1f%%)", nrow(datos_train) / nrow(divorcios_modelo) * 100), "\n")
+cat("Registros en prueba:       ", nrow(datos_test),
+    sprintf("(%.1f%%)", nrow(datos_test)  / nrow(divorcios_modelo) * 100), "\n")
+```
+
+## Análisis de balanceo de clases
+
+Dado que la variable respuesta es categórica, se analiza si las clases se encuentran balanceadas o desbalanceadas tanto en el conjunto completo como en los subconjuntos de entrenamiento y prueba. Un dataset desbalanceado puede llevar a modelos que favorezcan las clases mayoritarias y fallen sistemáticamente en las minoritarias.
+
+```{r balanceo, include=FALSE}
+# Distribución en el conjunto de entrenamiento
+dist_train <- datos_train %>%
+  count(eschom) %>%
+  mutate(
+    Porcentaje = round(n / sum(n) * 100, 2),
+    Conjunto   = "Entrenamiento"
+  ) %>%
+  rename(`Nivel Educativo` = eschom, Frecuencia = n)
+
+# Distribución en el conjunto de prueba
+dist_test <- datos_test %>%
+  count(eschom) %>%
+  mutate(
+    Porcentaje = round(n / sum(n) * 100, 2),
+    Conjunto   = "Prueba"
+  ) %>%
+  rename(`Nivel Educativo` = eschom, Frecuencia = n)
+
+kable(dist_train, caption = "Distribución de clases — Conjunto de Entrenamiento")
+kable(dist_test,  caption = "Distribución de clases — Conjunto de Prueba")
+```
+
+```{r grafico-balanceo, include=FALSE}
+dist_completa <- bind_rows(dist_train, dist_test)
+
+ggplot(dist_completa,
+       aes(x = `Nivel Educativo`, y = Porcentaje, fill = Conjunto)) +
+  geom_col(position = "dodge") +
+  labs(
+    title    = "Distribución proporcional de clases por conjunto",
+    subtitle = "Entrenamiento (70%) vs Prueba (30%)",
+    x        = "Nivel Educativo del Hombre",
+    y        = "Porcentaje (%)",
+    fill     = "Conjunto"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+## Conclusiones sobre el balanceo
+
+El análisis de la distribución de clases revela que el dataset presenta un **desbalance marcado**: la categoría "Diversificado" concentra aproximadamente el 40% de los registros, mientras que categorías como "Postgrado" o "Ninguno" representan proporciones considerablemente menores. Este comportamiento es consistente con la distribución educativa observada en el análisis exploratorio y refleja la realidad sociodemográfica del país.
+
+Dado este desbalance, se tomarán las siguientes medidas al momento de entrenar los modelos:
+
+- **Random Forest**: se utilizará el parámetro `classwt` o `class.weights` para asignar mayor peso a las clases minoritarias durante el entrenamiento.
+- **Árbol de Decisión**: se empleará el parámetro `prior` en `rpart` o se explorará el uso de pesos por clase.
+- **Regresión Logística Multinomial**: se evaluará la inclusión de pesos de observación proporcionales a la frecuencia inversa de cada clase.
+
+Adicionalmente, se reportarán métricas por clase (precisión, recall y F1-score) en lugar de depender únicamente de la exactitud global, ya que esta última puede ser engañosa cuando las clases no están balanceadas.
+
+---
+
+# Referencias Bibliográficas
+
+Instituto Nacional de Estadística de Guatemala. (2010–2022). *Registros de divorcios*. INE Guatemala. https://www.ine.gob.gt/
+
+Mohammadinasab, H., et al. (2023). Marital Stability and Divorce Prediction Among Couples: A Machine Learning Approach. En: *Proceedings of ELM 2021*, pp. 68–83. Springer, Cham. https://link.springer.com/chapter/10.1007/978-3-031-21678-7_7
+
+Rodríguez Vignoli, J. (2004). *Unión y cohabitación en América Latina: ¿modernidad, exclusión, diversidad?* CEPAL, Serie Población y Desarrollo No. 57. https://repositorio.cepal.org/handle/11362/7213
+
+Sanchez-Pinto, L. N., et al. (2023). Understanding the social determinants of child mortality in Latin America over the last two decades: a machine learning approach. *Scientific Reports*. https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10682478/
+
+Satu, M. S., Riyad, M. M. H., & Rony, M. A. T. (2022). Predicting Divorce Prospect Using Ensemble Learning: Support Vector Machine, Linear Model, and Neural Network. *PubMed Central*. https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9293523/
+
+Sirven, N., & Debrand, T. (2022). Applying machine learning to social datasets: a study of migration in southwestern Bangladesh using random forests. *Regional Environmental Change*, 22. Springer. https://link.springer.com/article/10.1007/s10113-022-01915-1
+
+Takkavatakarn, K., Dai, Y., Wen, H. H., Kauffman, J., Charney, A., Coca, S. G., Nadkarni, G. N., & Chan, L. (2024). Comparison of predicting cardiovascular disease hospitalization using individual, ZIP code-derived, and machine learning model-predicted educational attainment in New York City. *PLOS ONE*. https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10852236/
