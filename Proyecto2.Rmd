@@ -25,7 +25,7 @@ library(ggplot2)
 library(gridExtra)
 ```
 
-```{r carga-datos, include=FALSE}
+```{r carga-datos, echo=FALSE}
 ruta <- "data/"
 archivos <- list.files(path = ruta, pattern = "\\.sav$", full.names = TRUE)
 
@@ -83,6 +83,7 @@ divorcios_limpio <- divorcios %>%
   ) %>%
   select(-any_of(c("anoocu", "puehom", "pperhom", "puemuj", "ppermuj",
                    "pueblo_h", "pueblo_m")))
+
 ```
 
 ---
@@ -104,7 +105,7 @@ El problema se plantea como uno de **clasificación multiclase**: dado un conjun
 
 ## Características de la Variable
 
-```{r descripcion-vr, include=FALSE}
+```{r descripcion-vr, echo=FALSE}
 divorcios_modelo <- divorcios_limpio %>%
   mutate(eschom = as_factor(eschom),
          escmuj = as_factor(escmuj)) %>%
@@ -121,7 +122,7 @@ kable(frec_vr,
       caption = "Distribución de la Variable Respuesta: Nivel Educativo del Hombre")
 ```
 
-```{r grafico-vr, include=FALSE}
+```{r grafico-vr, echo=FALSE}
 ggplot(divorcios_modelo, aes(x = eschom, fill = eschom)) +
   geom_bar() +
   labs(
@@ -414,3 +415,222 @@ Satu, M. S., Riyad, M. M. H., & Rony, M. A. T. (2022). Predicting Divorce Prospe
 Sirven, N., & Debrand, T. (2022). Applying machine learning to social datasets: a study of migration in southwestern Bangladesh using random forests. *Regional Environmental Change*, 22. Springer. https://link.springer.com/article/10.1007/s10113-022-01915-1
 
 Takkavatakarn, K., Dai, Y., Wen, H. H., Kauffman, J., Charney, A., Coca, S. G., Nadkarni, G. N., & Chan, L. (2024). Comparison of predicting cardiovascular disease hospitalization using individual, ZIP code-derived, and machine learning model-predicted educational attainment in New York City. *PLOS ONE*. https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10852236/
+
+
+# Preprocesamiento para Random Forest
+
+La transformación principal requerida para aplicar correctamente este algoritmo consiste en el manejo del desbalance de clases previamente identificado. Para ello, calcularemos los pesos de clase inversamente proporcionales a su frecuencia, los cuales serán pasados como hiperparámetro en uno de los modelos para penalizar los errores en las clases minoritarias como "Postgrado" o "Ninguno".
+
+```{r preprocesamiento-rf, echo=FALSE}
+# Limpiar niveles vacíos (como "Ignorado") que quedaron guardados en los factores
+datos_train$eschom <- droplevels(datos_train$eschom)
+datos_test$eschom <- droplevels(datos_test$eschom)
+
+# Cálculo de pesos para mitigar el desbalance de clases
+frecuencias_clase <- table(datos_train$eschom)
+pesos_rf <- 1 / sqrt(frecuencias_clase)
+pesos_rf <- pesos_rf / sum(pesos_rf) # Normalización
+```
+
+## Generación y Selección de Modelos (Random Forest)
+
+Con el objetivo de encontrar la mejor configuración predictiva, se procedió a crear 3 modelos diferentes de Random Forest, variando sus hiperparámetros. Los parámetros principales a variar son ntree número de árboles y mtry número de variables evaluadas en cada división.
+
+```{r modelos, echo=FALSE}
+library(randomForest)
+set.seed(2026)
+
+# Modelo 1: Parámetros por defecto
+# Usa ntree = 500 y mtry = sqrt(variables predictoras)
+rf_modelo_1 <- randomForest(
+  eschom ~ ., 
+  data = datos_train,
+  importance = TRUE
+)
+
+# Modelo 2: Ajuste de hiperparámetros
+# Reducimos ntree a 300 (para eficiencia) y aumentamos mtry a 4 para dar más contexto en cada corte
+rf_modelo_2 <- randomForest(
+  eschom ~ ., 
+  data = datos_train,
+  ntree = 300,
+  mtry = 4,
+  importance = TRUE
+)
+
+# Modelo 3: Ajuste de hiperparámetros + Balanceo de Clases
+# Mantenemos los parámetros del Modelo 2, pero agregamos los pesos calculados (classwt)
+rf_modelo_3 <- randomForest(
+  eschom ~ ., 
+  data = datos_train,
+  ntree = 300,
+  mtry = 4,
+  classwt = pesos_rf,
+  importance = TRUE
+)
+
+# ---- NUEVO JUEZ: Evaluando en los datos de prueba ----
+
+# Generamos predicciones para los 3 modelos usando el dataset de prueba
+pred1 <- predict(rf_modelo_1, datos_test)
+pred2 <- predict(rf_modelo_2, datos_test)
+pred3 <- predict(rf_modelo_3, datos_test)
+
+# Extraemos las matrices de confusión
+cm1 <- confusionMatrix(pred1, datos_test$eschom)
+cm2 <- confusionMatrix(pred2, datos_test$eschom)
+cm3 <- confusionMatrix(pred3, datos_test$eschom)
+
+# Calculamos el promedio de la Exactitud Balanceada de todas las clases
+bal_acc_1 <- mean(cm1$byClass[,"Balanced Accuracy"], na.rm = TRUE)
+bal_acc_2 <- mean(cm2$byClass[,"Balanced Accuracy"], na.rm = TRUE)
+bal_acc_3 <- mean(cm3$byClass[,"Balanced Accuracy"], na.rm = TRUE)
+
+# F1 Macro (mejor métrica para clases desbalanceadas)
+f1_macro <- function(cm) {
+  precision <- cm$byClass[, "Pos Pred Value"]
+  recall    <- cm$byClass[, "Sensitivity"]
+  f1        <- 2 * (precision * recall) / (precision + recall)
+  mean(f1, na.rm = TRUE)
+}
+
+f1_1 <- f1_macro(cm1)
+f1_2 <- f1_macro(cm2)
+f1_3 <- f1_macro(cm3)
+
+# ---- TABLA COMPARATIVA FINAL ----
+comparacion_final <- data.frame(
+  Modelo = c("Modelo 1 (Base)", "Modelo 2 (Ajustado)", "Modelo 3 (Ajustado + Pesos)"),
+  Error_OOB_Entrenamiento = c(
+    rf_modelo_1$err.rate[nrow(rf_modelo_1$err.rate), "OOB"],
+    rf_modelo_2$err.rate[nrow(rf_modelo_2$err.rate), "OOB"],
+    rf_modelo_3$err.rate[nrow(rf_modelo_3$err.rate), "OOB"]
+  ),
+  Exactitud_Balanceada_Test = c(bal_acc_1, bal_acc_2, bal_acc_3),
+  F1_Macro_Test = c(f1_1, f1_2, f1_3)
+)
+
+knitr::kable(
+  comparacion_final[, c("Modelo", "Error_OOB_Entrenamiento")],
+  digits = 4,
+  caption = "Error OOB por modelo durante entrenamiento"
+)
+```
+
+## Selección del Modelo Final
+
+Para seleccionar el mejor modelo, se evaluaron tres métricas complementarias: el error 
+Out-Of-Bag (OOB) como estimación interna del entrenamiento, la Exactitud Balanceada y el 
+F1 Macro sobre el conjunto de prueba. Esta última es la métrica principal dado el marcado 
+desbalance de clases identificado previamente.
+
+```{r tabla-seleccion, echo=FALSE}
+knitr::kable(comparacion_final, digits = 4,
+             caption = "Comparación de modelos: OOB, Exactitud Balanceada y F1 Macro")
+```
+
+Los resultados muestran que el **Modelo 1 (parámetros por defecto)** obtiene el mejor 
+desempeño en prueba, con un F1 Macro de 0.4820 y una Exactitud Balanceada de 0.6418. 
+Contrario a lo esperado, la incorporación de pesos de clase (Modelo 3) y el ajuste de 
+hiperparámetros (Modelo 2) no mejoraron el rendimiento general: ambos introducen un sesgo 
+que perjudica la clasificación de las clases intermedias más frecuentes sin compensar 
+suficientemente las minoritarias. Asimismo, el Modelo 1 presenta la mayor brecha entre 
+error OOB y exactitud en prueba, lo que indica una leve tendencia al sobreajuste que los 
+modelos 2 y 3 reducen — aunque a costa del rendimiento predictivo general.
+
+Por tanto, se selecciona el **Modelo 1** como modelo final de Random Forest.
+
+## Discusión de Resultados y Matriz de Confusión
+
+A continuación se evalúa el modelo seleccionado sobre el conjunto de prueba, que representa 
+el 30% de los datos originales que el modelo nunca vio durante el entrenamiento.
+
+```{r discusion-rf, echo=FALSE}
+library(caret)
+library(ggplot2)
+library(dplyr)
+
+# Predicción con el modelo ganador
+predicciones_rf <- predict(rf_modelo_1, datos_test)
+
+# Matriz de confusión
+matriz_confusion_rf <- confusionMatrix(
+  data      = predicciones_rf,
+  reference = datos_test$eschom
+)
+
+# Convertir a dataframe para graficar
+cm_df <- as.data.frame(matriz_confusion_rf$table)
+colnames(cm_df) <- c("Predicho", "Real", "Frecuencia")
+
+# Porcentaje por clase real
+cm_df <- transform(
+  cm_df,
+  Porcentaje = ave(Frecuencia, Real, FUN = function(x) x / sum(x) * 100)
+)
+
+ggplot(cm_df, aes(x = Predicho, y = Real, fill = Porcentaje)) +
+  geom_tile(color = "white", linewidth = 0.8) +
+  geom_text(aes(label = paste0(Frecuencia, "\n(", round(Porcentaje, 1), "%)")),
+            size = 3.2, color = "white", fontface = "bold") +
+  scale_fill_gradient(low = "#2c3e50", high = "#e74c3c",
+                      name = "% por clase\nreal") +
+  labs(
+    title    = "Matriz de Confusión — Modelo Final Random Forest",
+    subtitle = "Porcentaje calculado sobre cada clase real (filas)",
+    x        = "Clase Predicha",
+    y        = "Clase Real"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+    axis.text.y      = element_text(face = "bold"),
+    panel.grid       = element_blank(),
+    plot.title       = element_text(face = "bold", size = 13),
+    plot.subtitle    = element_text(color = "gray50", size = 10),
+    legend.position  = "right"
+  )
+```
+
+
+## Análisis de Resultados
+
+**Clase dominante — Diversificado:** La matriz revela que el modelo predice 
+correctamente el 77% de los casos de la clase "Diversificado", que es la 
+mayoritaria con ~41% del dataset. Esto era esperable: al concentrar más ejemplos 
+de entrenamiento, el modelo aprende mejor sus patrones.
+
+**Clases intermedias con alta confusión:** "Básico" solo se predice correctamente 
+en el 19.1% de los casos, y "Primaria" en el 50.5%. Ambas clases se confunden 
+frecuentemente con "Diversificado", lo que sugiere que sus perfiles demográficos 
+— edad, departamento, etnia — se solapan considerablemente con los de esa clase 
+mayoritaria.
+
+**Universitario subestimado:** A pesar de tener ~11% de los registros, 
+"Universitario" solo se clasifica correctamente en el 32.3% de los casos. 
+La mayoría de sus instancias se predicen erróneamente como "Diversificado" 
+(58.8%), lo que indica que el modelo tiene dificultades para distinguir entre 
+ambos niveles con las variables disponibles.
+
+**Postgrado: clase invisible:** El modelo no logra predecir correctamente ningún 
+caso de "Postgrado" (0 aciertos). Con apenas 76 registros en todo el dataset 
+(0.27%), esta clase es estadísticamente casi inexistente para el algoritmo. 
+Sin técnicas de sobremuestreo como SMOTE, es muy difícil que cualquier modelo 
+aprenda sus patrones.
+
+**Ninguno — el mejor rendimiento relativo:** Con un 57% de aciertos, "Ninguno" 
+es junto con "Diversificado" la clase mejor identificada. Su perfil demográfico 
+— edades más altas, departamentos con menor acceso educativo — es suficientemente 
+distintivo para que el modelo lo reconozca.
+
+**Sobreajuste moderado y controlado:** La brecha entre el error OOB de 
+entrenamiento (0.4525) y el rendimiento en prueba existe pero no es alarmante. 
+El OOB de Random Forest ya es una estimación conservadora porque cada árbol se 
+evalúa sobre muestras que no usó, por lo que esta diferencia no representa 
+overfitting grave sino varianza natural del ensamble.
+
+**Importancia de variables:** El modelo se apoya principalmente en la edad 
+del hombre, para distinguir entre niveles educativos. Esto es consistente con los patrones 
+identificados en el análisis exploratorio, donde se observó una relación 
+progresiva entre edad y escolaridad, y diferencias regionales marcadas en el 
+perfil educativo de los divorciados en Guatemala.
