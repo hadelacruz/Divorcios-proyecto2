@@ -771,13 +771,19 @@ knitr::kable(comparacion_rl, digits = 4,
              caption = "Comparación de modelos: Regresión Logística Multinomial")
 ```
 
-El modelo seleccionado como final es el **Modelo 3 (Pesos + Decay)**, ya que la regularización L2 reduce el sobreajuste sobre los predictores categóricos de alta cardinalidad como `depocu`, mientras que los pesos de clase compensan el marcado desbalance hacia "Diversificado". Aunque la exactitud global puede ser similar entre modelos, el F1 Macro y la Exactitud Balanceada favorecen al Modelo 3 al penalizar menos las clases minoritarias.
+El modelo seleccionado como final es el **Modelo 2 (Pesos)**, ya que obtiene la 
+mayor Exactitud Balanceada (0.6855) y el mayor F1 Macro (0.3765) en el conjunto 
+de prueba. Aunque el Modelo 1 tiene mayor exactitud global (0.5326), esta métrica 
+es engañosa con clases desbalanceadas — favorece predecir siempre "Diversificado". 
+El Modelo 3 con decay reduce ambas métricas respecto al Modelo 2, lo que sugiere 
+que la regularización L2 es excesiva para este problema y penaliza innecesariamente 
+los coeficientes que capturan las clases minoritarias.
 
 ## Discusión de Resultados y Matriz de Confusión
 
 ```{r confusion-rl, echo=TRUE}
 # Matriz de confusión del modelo final
-cm_rl_final <- cm_rl_3
+cm_rl_final <- cm_rl_2
 
 cm_rl_df <- as.data.frame(cm_rl_final$table)
 colnames(cm_rl_df) <- c("Predicho", "Real", "Frecuencia")
@@ -812,22 +818,35 @@ ggplot(cm_rl_df, aes(x = Predicho, y = Real, fill = Porcentaje)) +
 
 ## Análisis de Resultados
 
-**Clase dominante — Diversificado:** Al igual que en Random Forest, el modelo concentra 
-sus aciertos en la clase mayoritaria. La regresión logística multinomial, al asumir 
-linealidad entre predictores y log-odds, tiene menos flexibilidad para capturar 
-fronteras de decisión complejas entre clases solapadas.
+**Postgrado — mejor recall que Random Forest:** El modelo identifica correctamente 
+15 de 22 casos de "Postgrado" (68.2%) en el conjunto de prueba, resultado notable 
+dado que esta clase tiene apenas 22 casos en prueba (76 en todo el dataset). Los 
+pesos de clase del Modelo 2 benefician efectivamente a las clases más pequeñas. 
+Sin embargo, el modelo tiende a sobrepredicir "Postgrado", clasificando erróneamente 
+el 30.6% de "Universitario" y el 14.8% de "Diversificado" en esa categoría.
 
-**Clases minoritarias:** "Postgrado" continúa siendo prácticamente invisible para el 
-modelo — con apenas 76 registros en todo el dataset, ningún algoritmo sin sobremuestreo 
-puede aprender sus patrones. "Básico" y "Primaria" muestran confusión elevada con 
-"Diversificado", patrón consistente con lo observado en Random Forest.
+**Ninguno — el más distintivo:** Con 71.8% de aciertos es la clase mejor identificada. 
+Su perfil demográfico — edades más altas, departamentos con menor acceso educativo — 
+genera un patrón suficientemente diferenciable para el modelo lineal.
 
-**Comparación con Random Forest:** La regresión logística multinomial cumple su rol 
-de baseline estadístico: es interpretable y entrena rápido, pero su exactitud global 
-y F1 Macro son inferiores a los del modelo de ensamble. Esto confirma que la relación 
-entre las variables predictoras y el nivel educativo no es estrictamente lineal en el 
-espacio log-odds, y que Random Forest captura mejor esas no linealidades.
+**Primaria:** Se predice correctamente en el 45.5% de los casos, con confusión 
+elevada hacia "Básico" (17.5%) y "Ninguno" (15.5%), clases adyacentes en la escala 
+ordinal educativa.
 
-**Sobreajuste:** La inclusión de `decay=0.01` en el Modelo 3 reduce la brecha entre 
-entrenamiento y prueba respecto al baseline, lo que indica que la regularización L2 
-es beneficiosa para este problema con variables categóricas de alta cardinalidad.
+**Diversificado — dominancia reducida por los pesos:** A pesar de ser la clase 
+mayoritaria (~40% del dataset), el modelo la predice correctamente en solo el 42.8% 
+de los casos. Los pesos inversos penalizan su dominancia durante el entrenamiento, 
+redistribuyendo predicciones hacia clases minoritarias — esto explica la mejora en 
+Exactitud Balanceada (0.6855) respecto al baseline sin pesos (0.6309), aunque a 
+costa de la exactitud global (0.4361 vs 0.5326).
+
+**Básico — clase más difícil:** Solo el 31.7% de aciertos, con confusión distribuida 
+entre "Primaria" (21%), "Diversificado" (27.2%) y "Postgrado" (6.9%). Su perfil 
+demográfico se solapa con múltiples clases adyacentes, lo que lo hace el nivel 
+educativo más difícil de clasificar para un modelo lineal.
+
+**Comparación con Random Forest:** La regresión logística multinomial obtiene menor 
+exactitud global (0.4361 vs ~0.55 de RF) pero mejor recall en clases extremas como 
+"Postgrado" y "Ninguno", gracias a los pesos de clase. Esto confirma que la relación 
+entre variables demográficas y nivel educativo no es estrictamente lineal, y que 
+Random Forest captura mejor las interacciones no lineales entre predictores.
