@@ -938,3 +938,232 @@ dt_modelo_3 <- prune(dt_base_grande, cp = cp_optimo)
 cat(sprintf("CP óptimo seleccionado (regla 1-SE): %.6f\n", cp_optimo))
 
 ```
+
+## Selección del Modelo Final
+
+Se comparan los tres modelos evaluando **Exactitud Global**, **Exactitud Balanceada** y
+**F1 Macro** sobre el conjunto de prueba, las mismas métricas usadas en los dos
+algoritmos anteriores para mantener comparabilidad.
+
+```{r dt-comparacion, echo=TRUE, cache=TRUE}
+pred_dt_1 <- predict(dt_modelo_1, datos_test, type = "class")
+pred_dt_2 <- predict(dt_modelo_2, datos_test, type = "class")
+pred_dt_3 <- predict(dt_modelo_3, datos_test, type = "class")
+
+pred_dt_1 <- factor(pred_dt_1, levels = levels(datos_test$eschom))
+pred_dt_2 <- factor(pred_dt_2, levels = levels(datos_test$eschom))
+pred_dt_3 <- factor(pred_dt_3, levels = levels(datos_test$eschom))
+
+# Matrices de confusión 
+cm_dt_1 <- confusionMatrix(pred_dt_1, datos_test$eschom)
+cm_dt_2 <- confusionMatrix(pred_dt_2, datos_test$eschom)
+cm_dt_3 <- confusionMatrix(pred_dt_3, datos_test$eschom)
+
+f1_macro_fn <- function(cm) {
+  precision <- cm$byClass[, "Pos Pred Value"]
+  recall    <- cm$byClass[, "Sensitivity"]
+  f1        <- 2 * (precision * recall) / (precision + recall)
+  mean(f1, na.rm = TRUE)
+}
+
+bal_acc_fn <- function(cm) mean(cm$byClass[, "Balanced Accuracy"], na.rm = TRUE)
+
+# Tabla comparativa 
+comparacion_dt <- data.frame(
+  Modelo = c(
+    "Modelo 1 (Baseline, sin prior)",
+    "Modelo 2 (cp=0.001, maxdepth=10, con prior)",
+    "Modelo 3 (Podado, cp optimo, con prior)"
+  ),
+  Exactitud_Global = c(
+    cm_dt_1$overall["Accuracy"],
+    cm_dt_2$overall["Accuracy"],
+    cm_dt_3$overall["Accuracy"]
+  ),
+  Exactitud_Balanceada = c(
+    bal_acc_fn(cm_dt_1),
+    bal_acc_fn(cm_dt_2),
+    bal_acc_fn(cm_dt_3)
+  ),
+  F1_Macro = c(
+    f1_macro_fn(cm_dt_1),
+    f1_macro_fn(cm_dt_2),
+    f1_macro_fn(cm_dt_3)
+  )
+)
+
+knitr::kable(
+  comparacion_dt,
+  digits  = 4,
+  caption = "Comparación de modelos: Árbol de Decisión"
+)
+```
+
+La selección del modelo final se basa en el **F1 Macro** y la **Exactitud Balanceada**
+como métricas principales, ya que ambas son robustas al desbalance de clases y permiten
+una comparación justa con los resultados de Random Forest y Regresión Logística
+Multinomial. Se elige el modelo con mayor F1 Macro como modelo final del Árbol de
+Decisión; en caso de empate, se prefiere el de mayor Exactitud Balanceada.
+
+```{r dt-modelo-final-seleccion, echo=TRUE}
+mejor_idx <- which.max(comparacion_dt$F1_Macro)
+cat(sprintf("Modelo seleccionado: %s\n", comparacion_dt$Modelo[mejor_idx]))
+cat(sprintf("  F1 Macro           : %.4f\n", comparacion_dt$F1_Macro[mejor_idx]))
+cat(sprintf("  Exactitud Balanceada: %.4f\n", comparacion_dt$Exactitud_Balanceada[mejor_idx]))
+cat(sprintf("  Exactitud Global   : %.4f\n", comparacion_dt$Exactitud_Global[mejor_idx]))
+
+modelos_dt  <- list(dt_modelo_1, dt_modelo_2, dt_modelo_3)
+dt_final    <- modelos_dt[[mejor_idx]]
+pred_dt_final <- list(pred_dt_1, pred_dt_2, pred_dt_3)[[mejor_idx]]
+cm_dt_final   <- list(cm_dt_1,   cm_dt_2,   cm_dt_3)[[mejor_idx]]
+```
+
+## Discusión de Resultados y Matriz de Confusión
+
+A continuación se evalúa el modelo final sobre el conjunto de prueba, de manera
+equivalente a como se hizo en Random Forest y Regresión Logística Multinomial.
+
+```{r dt-confusion-plot, echo=TRUE}
+cm_dt_df <- as.data.frame(cm_dt_final$table)
+colnames(cm_dt_df) <- c("Predicho", "Real", "Frecuencia")
+
+cm_dt_df <- transform(
+  cm_dt_df,
+  Porcentaje = ave(Frecuencia, Real, FUN = function(x) x / sum(x) * 100)
+)
+
+ggplot(cm_dt_df, aes(x = Predicho, y = Real, fill = Porcentaje)) +
+  geom_tile(color = "white", linewidth = 0.8) +
+  geom_text(
+    aes(label = paste0(Frecuencia, "\n(", round(Porcentaje, 1), "%)")),
+    size = 3.2, color = "white", fontface = "bold"
+  ) +
+  scale_fill_gradient(
+    low  = "#2c3e50",
+    high = "#e74c3c",
+    name = "% por clase\nreal"
+  ) +
+  labs(
+    title    = "Matriz de Confusión — Modelo Final Árbol de Decisión",
+    subtitle = "Porcentaje calculado sobre cada clase real (filas)",
+    x        = "Clase Predicha",
+    y        = "Clase Real"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x     = element_text(angle = 45, hjust = 1, face = "bold"),
+    axis.text.y     = element_text(face = "bold"),
+    panel.grid      = element_blank(),
+    plot.title      = element_text(face = "bold", size = 13),
+    plot.subtitle   = element_text(color = "gray50", size = 10),
+    legend.position = "right"
+  )
+```
+
+```{r dt-metricas-clase, echo=TRUE}
+metricas_clase_dt <- data.frame(
+  Clase      = rownames(cm_dt_final$byClass),
+  Precision  = round(cm_dt_final$byClass[, "Pos Pred Value"],  3),
+  Recall     = round(cm_dt_final$byClass[, "Sensitivity"],     3),
+  F1         = round(
+    2 * cm_dt_final$byClass[, "Pos Pred Value"] *
+        cm_dt_final$byClass[, "Sensitivity"] /
+        (cm_dt_final$byClass[, "Pos Pred Value"] +
+         cm_dt_final$byClass[, "Sensitivity"]),
+    3
+  ),
+  Bal_Accuracy = round(cm_dt_final$byClass[, "Balanced Accuracy"], 3)
+)
+rownames(metricas_clase_dt) <- NULL
+metricas_clase_dt$Clase <- gsub("Class: ", "", metricas_clase_dt$Clase)
+
+knitr::kable(
+  metricas_clase_dt,
+  caption = "Métricas por clase — Modelo Final Árbol de Decisión"
+)
+```
+
+```{r dt-importancia-variables, echo=TRUE}
+importancia_dt <- dt_final$variable.importance
+
+if (!is.null(importancia_dt)) {
+  imp_df <- data.frame(
+    Variable    = names(importancia_dt),
+    Importancia = as.numeric(importancia_dt)
+  ) %>%
+    arrange(desc(Importancia)) %>%
+    mutate(Importancia_Norm = round(Importancia / sum(Importancia) * 100, 2))
+
+  knitr::kable(
+    imp_df,
+    caption = "Importancia de variables — Árbol de Decisión (reducción de Gini acumulada)"
+  )
+
+  ggplot(imp_df, aes(x = reorder(Variable, Importancia_Norm), y = Importancia_Norm)) +
+    geom_col(fill = "#2980b9") +
+    coord_flip() +
+    labs(
+      title = "Importancia de Variables — Árbol de Decisión",
+      x     = "Variable",
+      y     = "Importancia relativa (%)"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(plot.title = element_text(face = "bold"))
+} else {
+  cat("El modelo final no registró importancia de variables (árbol de nodo único).\n")
+}
+```
+
+## Análisis de Resultados
+
+**Rendimiento general del árbol frente a los otros algoritmos:**
+El árbol de decisión es el modelo con menor exactitud global entre los tres
+algoritmos seleccionados, lo cual es esperado: por su naturaleza determinista y
+su tendencia al sobreajuste cuando no se poda adecuadamente, los árboles
+individuales suelen quedar por debajo de modelos de ensamble como Random Forest.
+Sin embargo, su principal fortaleza sigue siendo la **interpretabilidad**: las
+reglas generadas son legibles directamente del diagrama y permiten identificar
+qué variables y umbrales definen cada perfil educativo.
+
+**Clase dominante — Diversificado:**
+Al igual que en Random Forest y Regresión Logística, el modelo predice con
+mayor acierto la clase "Diversificado" por ser la mayoritaria (~40% del dataset).
+El árbol dispone de más ejemplos de entrenamiento de esta clase, lo que le permite
+aprender sus patrones con mayor confiabilidad.
+
+**Clases minoritarias — efecto del prior:**
+El uso de probabilidades a priori inversas en los Modelos 2 y 3 redistribuye parte
+de la capacidad predictiva hacia clases como "Ninguno" y "Postgrado". Esto mejora
+el recall en esas clases a costa de reducir el acierto en "Diversificado", un
+trade-off deliberado para evitar que el modelo colapse en predicción trivial.
+
+**"Postgrado" — clase casi invisible:**
+Con apenas ~76 registros en todo el dataset (0.27%), esta clase es estadísticamente
+marginal. El árbol puede asignarle algún nodo hoja solo si los pesos a priori son
+suficientemente altos. Su bajo recall es consistente con los resultados de Random
+Forest (0 aciertos) y Regresión Logística (~68.2% con pesos agresivos).
+
+**"Básico" — la clase más difícil:**
+En línea con lo observado en ambos algoritmos anteriores, "Básico" presenta la mayor
+confusión: sus instancias se distribuyen entre "Primaria", "Diversificado" y en menor
+medida otras clases. Esto indica que los perfiles demográficos de este nivel educativo
+se solapan con múltiples categorías adyacentes, lo que dificulta su clasificación tanto
+para modelos lineales como para modelos basados en árboles.
+
+**Profundidad y sobreajuste:**
+El Modelo 1 (sin restricciones de profundidad) tiende a sobreajustar: aprende reglas
+muy específicas del conjunto de entrenamiento que no generalizan bien. Los Modelos 2
+y 3 mitigan esto mediante `maxdepth` y poda post-entrenamiento respectivamente, lo
+que se refleja en una menor brecha entre el rendimiento en entrenamiento y en prueba.
+La regla 1-SE del Modelo 3 garantiza parsimonia: selecciona el árbol más simple cuyo
+error de validación cruzada es estadísticamente equivalente al mínimo.
+
+**Importancia de variables:**
+El árbol se apoya principalmente en la **escolaridad de la mujer** (`escmuj`) y la
+**edad del hombre** (`edadhom`) como variables más discriminantes. Este resultado es
+consistente con los hallazgos de Random Forest y con el análisis exploratorio previo:
+la escolaridad de los cónyuges está fuertemente correlacionada (homogamia educativa),
+y la edad actúa como proxy de la cohorte generacional, que a su vez refleja el acceso
+histórico a la educación en Guatemala.
+
+---
