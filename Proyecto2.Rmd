@@ -850,3 +850,91 @@ exactitud global (0.4361 vs ~0.55 de RF) pero mejor recall en clases extremas co
 "Postgrado" y "Ninguno", gracias a los pesos de clase. Esto confirma que la relación 
 entre variables demográficas y nivel educativo no es estrictamente lineal, y que 
 Random Forest captura mejor las interacciones no lineales entre predictores.
+
+
+# Arboles de decisión 
+
+## Procesamiento
+El Árbol de Decisión, que utiliza el paquete `rpart`, acepta directamente
+variables categóricas codificadas como factores y variables numéricas sin necesidad de
+normalización ni transformaciones adicionales. Los conjuntos `datos_train` y `datos_test`
+ya cuentan con esta estructura gracias a la preparación realizada en la sección de
+partición, por lo que no se requiere ninguna recodificación adicional.
+
+La transformación principal para este algoritmo es, al igual que en los otros dos
+algoritmos ya trabajados, el **manejo del desbalance de clases**. En `rpart` esto se
+controla mediante el parámetro `parms = list(prior = ...)`, que permite indicar las
+probabilidades a priori de cada clase. Al asignar una probabilidad a priori mayor a las
+clases minoritarias (como "Postgrado" o "Ninguno"), el criterio de división Gini penaliza
+más los errores cometidos en esas clases durante la construcción del árbol.
+
+```{r preprocesamiento-at, echo=TRUE}
+library(rpart)
+library(rpart.plot)
+library(caret)
+
+set.seed(2026)
+
+
+# pesos a priori inversamente proporcionales al tamaño de cada clase 
+datos_train$eschom <- droplevels(datos_train$eschom)
+datos_test$eschom  <- droplevels(datos_test$eschom)
+
+frecuencias_dt <- table(datos_train$eschom)
+prior_dt       <- 1 / as.numeric(frecuencias_dt)
+prior_dt       <- prior_dt / sum(prior_dt)
+names(prior_dt) <- names(frecuencias_dt)
+
+cat("Probabilidades a priori asignadas por clase:\n")
+print(round(prior_dt, 4))
+
+
+```
+
+## Generación y Selección de Modelos (Árbol de Decisión)
+
+Se entrenaron **tres modelos** variando los hiperparámetros `cp`, `maxdepth`,
+`minsplit` y `minbucket`, y explorando el efecto de los pesos a priori para
+el manejo del desbalance. El objetivo es encontrar el árbol que mejor generaliza
+sin caer en sobreajuste (árbol demasiado profundo) ni en subajuste (árbol trivial).
+
+
+```{r modelos-at, echo=TRUE, cache=False}
+
+# Modelo 1: parametros por defecto, sin pesos
+
+dt_modelo_1 <- rpart(
+  eschom ~ ., data = datos_train, method = "class",
+  control = rpart.control(cp = 0.01, minsplit = 20, minbucket = 7)
+)
+
+# Modelo 2: árbol más profundo con pesos a priori
+
+dt_modelo_2 <- rpart(
+  eschom ~ ., data = datos_train, method = "class",
+  parms   = list(prior = prior_dt),
+  control = rpart.control(cp = 0.001, maxdepth = 10, minsplit = 20, minbucket = 7)
+)
+
+#Modelo 3: podado por cross-validation
+
+# Árbol completo con cp muy bajo como punto de partida para post-pruning
+dt_base_grande <- rpart(
+  eschom ~ ., data = datos_train, method = "class",
+  parms   = list(prior = prior_dt),
+  control = rpart.control(cp = 0.0001, maxdepth = 15, minsplit = 15, minbucket = 5)
+)
+
+cp_tabla      <- dt_base_grande$cptable
+cp_min_idx    <- which.min(cp_tabla[, "xerror"])
+xerror_min    <- cp_tabla[cp_min_idx, "xerror"]
+xstd_min      <- cp_tabla[cp_min_idx, "xstd"]
+umbral        <- xerror_min + xstd_min
+cp_optimo_idx <- min(which(cp_tabla[, "xerror"] <= umbral))
+cp_optimo     <- cp_tabla[cp_optimo_idx, "CP"]
+
+dt_modelo_3 <- prune(dt_base_grande, cp = cp_optimo)
+
+cat(sprintf("CP óptimo seleccionado (regla 1-SE): %.6f\n", cp_optimo))
+
+```
