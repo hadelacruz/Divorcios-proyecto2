@@ -634,3 +634,39 @@ del hombre, para distinguir entre niveles educativos. Esto es consistente con lo
 identificados en el análisis exploratorio, donde se observó una relación 
 progresiva entre edad y escolaridad, y diferencias regionales marcadas en el 
 perfil educativo de los divorciados en Guatemala.
+
+---
+
+# Regresión Logística Multinomial
+
+## Preprocesamiento
+
+A diferencia de Random Forest y del Árbol de Decisión, la Regresión Logística Multinomial 
+implementada en R mediante `nnet::multinom` requiere que las variables categóricas estén 
+correctamente codificadas como factores con niveles bien definidos. El conjunto de datos 
+`datos_train` y `datos_test` ya cuentan con esta estructura gracias a la preparación 
+realizada en la sección de partición, por lo que no se requiere una recodificación 
+adicional de las variables.
+
+La transformación principal para este algoritmo es el **manejo del desbalance de clases**. 
+Dado el desbalance identificado previamente — donde "Diversificado" concentra ~40% de los 
+registros y "Postgrado" apenas el 0.27% — se calculan pesos de observación inversamente 
+proporcionales a la frecuencia de cada clase. Estos pesos se pasan al modelo mediante el 
+parámetro `weights`, penalizando los errores en las clases minoritarias durante el 
+entrenamiento.
+
+Adicionalmente, se evaluará el parámetro `decay` de `multinom`, que introduce 
+regularización L2 sobre los coeficientes, reduciendo el riesgo de sobreajuste cuando 
+el número de predictores es moderado en relación con el tamaño del dataset.
+```{r preprocesamiento-rl, echo=FALSE}
+library(nnet)
+library(caret)
+
+# Pesos inversamente proporcionales a la frecuencia de cada clase
+frecuencias_rl <- table(datos_train$eschom)
+pesos_clase_rl <- 1 / as.numeric(frecuencias_rl[datos_train$eschom])
+pesos_clase_rl <- pesos_clase_rl / sum(pesos_clase_rl) * nrow(datos_train)
+
+cat("Pesos calculados por clase:\n")
+print(round(1 / as.numeric(table(datos_train$eschom) / nrow(datos_train)), 3))
+```
