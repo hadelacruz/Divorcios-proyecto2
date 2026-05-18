@@ -421,7 +421,7 @@ Takkavatakarn, K., Dai, Y., Wen, H. H., Kauffman, J., Charney, A., Coca, S. G., 
 
 La transformación principal requerida para aplicar correctamente este algoritmo consiste en el manejo del desbalance de clases previamente identificado. Para ello, calcularemos los pesos de clase inversamente proporcionales a su frecuencia, los cuales serán pasados como hiperparámetro en uno de los modelos para penalizar los errores en las clases minoritarias como "Postgrado" o "Ninguno".
 
-```{r preprocesamiento-rf, echo=FALSE}
+```{r preprocesamiento-rf, echo=FALSE, cache=TRUE}
 # Limpiar niveles vacíos (como "Ignorado") que quedaron guardados en los factores
 datos_train$eschom <- droplevels(datos_train$eschom)
 datos_test$eschom <- droplevels(datos_test$eschom)
@@ -436,7 +436,7 @@ pesos_rf <- pesos_rf / sum(pesos_rf) # Normalización
 
 Con el objetivo de encontrar la mejor configuración predictiva, se procedió a crear 3 modelos diferentes de Random Forest, variando sus hiperparámetros. Los parámetros principales a variar son ntree número de árboles y mtry número de variables evaluadas en cada división.
 
-```{r modelos, echo=FALSE}
+```{r modelos, echo=FALSE, cache=TRUE}
 library(randomForest)
 set.seed(2026)
 
@@ -545,7 +545,7 @@ Por tanto, se selecciona el **Modelo 1** como modelo final de Random Forest.
 A continuación se evalúa el modelo seleccionado sobre el conjunto de prueba, que representa 
 el 30% de los datos originales que el modelo nunca vio durante el entrenamiento.
 
-```{r discusion-rf, echo=FALSE}
+```{r discusion-rf, echo=FALSE, cache=TRUE}
 library(caret)
 library(ggplot2)
 library(dplyr)
@@ -669,4 +669,51 @@ pesos_clase_rl <- pesos_clase_rl / sum(pesos_clase_rl) * nrow(datos_train)
 
 cat("Pesos calculados por clase:\n")
 print(round(1 / as.numeric(table(datos_train$eschom) / nrow(datos_train)), 3))
+```
+## Generación y Selección de Modelos (Regresión Logística Multinomial)
+
+Se entrenaron tres modelos variando dos hiperparámetros principales: `decay` 
+(regularización L2, que penaliza coeficientes grandes para reducir sobreajuste) 
+y `weights` (pesos de clase para mitigar el desbalance). El parámetro `maxit` 
+se fija en 300 para garantizar convergencia en todos los modelos.
+
+```{r modelos-rl, echo=TRUE, cache=TRUE}
+library(nnet)
+library(caret)
+
+set.seed(42)
+
+# Pesos inversamente proporcionales a la frecuencia de cada clase
+frecuencias_rl <- table(datos_train$eschom)
+pesos_clase_rl <- 1 / as.numeric(frecuencias_rl[datos_train$eschom])
+pesos_clase_rl <- pesos_clase_rl / sum(pesos_clase_rl) * nrow(datos_train)
+
+# Modelo 1: baseline — sin regularización, sin pesos
+rl_modelo_1 <- multinom(
+  eschom ~ .,
+  data  = datos_train,
+  maxit = 300,
+  trace = FALSE
+)
+
+# Modelo 2: con pesos de clase para mitigar desbalance
+rl_modelo_2 <- multinom(
+  eschom  ~ .,
+  data    = datos_train,
+  weights = pesos_clase_rl,
+  maxit   = 300,
+  trace   = FALSE
+)
+
+# Modelo 3: con regularización L2 (decay) + pesos
+rl_modelo_3 <- multinom(
+  eschom  ~ .,
+  data    = datos_train,
+  weights = pesos_clase_rl,
+  decay   = 0.01,
+  maxit   = 300,
+  trace   = FALSE
+)
+
+cat("Modelos entrenados correctamente.\n")
 ```
