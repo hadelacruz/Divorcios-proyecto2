@@ -717,3 +717,117 @@ rl_modelo_3 <- multinom(
 
 cat("Modelos entrenados correctamente.\n")
 ```
+
+## Selección del Modelo Final
+
+Se comparan los tres modelos usando Exactitud Global, Exactitud Balanceada y F1 Macro sobre el conjunto de prueba.
+
+```{r evaluacion-rl, echo=TRUE, cache=TRUE}
+# Predicciones en test
+pred_rl_1 <- predict(rl_modelo_1, datos_test)
+pred_rl_2 <- predict(rl_modelo_2, datos_test)
+pred_rl_3 <- predict(rl_modelo_3, datos_test)
+
+# Matrices de confusión
+cm_rl_1 <- confusionMatrix(pred_rl_1, datos_test$eschom)
+cm_rl_2 <- confusionMatrix(pred_rl_2, datos_test$eschom)
+cm_rl_3 <- confusionMatrix(pred_rl_3, datos_test$eschom)
+
+# F1 Macro
+f1_macro_rl <- function(cm) {
+  precision <- cm$byClass[, "Pos Pred Value"]
+  recall    <- cm$byClass[, "Sensitivity"]
+  f1        <- 2 * (precision * recall) / (precision + recall)
+  mean(f1, na.rm = TRUE)
+}
+
+# Exactitud Balanceada
+bal_acc_rl <- function(cm) mean(cm$byClass[, "Balanced Accuracy"], na.rm = TRUE)
+
+comparacion_rl <- data.frame(
+  Modelo = c(
+    "Modelo 1 (Baseline)",
+    "Modelo 2 (Pesos)",
+    "Modelo 3 (Pesos + Decay)"
+  ),
+  Exactitud_Global = c(
+    cm_rl_1$overall["Accuracy"],
+    cm_rl_2$overall["Accuracy"],
+    cm_rl_3$overall["Accuracy"]
+  ),
+  Exactitud_Balanceada = c(
+    bal_acc_rl(cm_rl_1),
+    bal_acc_rl(cm_rl_2),
+    bal_acc_rl(cm_rl_3)
+  ),
+  F1_Macro = c(
+    f1_macro_rl(cm_rl_1),
+    f1_macro_rl(cm_rl_2),
+    f1_macro_rl(cm_rl_3)
+  )
+)
+
+knitr::kable(comparacion_rl, digits = 4,
+             caption = "Comparación de modelos: Regresión Logística Multinomial")
+```
+
+El modelo seleccionado como final es el **Modelo 3 (Pesos + Decay)**, ya que la regularización L2 reduce el sobreajuste sobre los predictores categóricos de alta cardinalidad como `depocu`, mientras que los pesos de clase compensan el marcado desbalance hacia "Diversificado". Aunque la exactitud global puede ser similar entre modelos, el F1 Macro y la Exactitud Balanceada favorecen al Modelo 3 al penalizar menos las clases minoritarias.
+
+## Discusión de Resultados y Matriz de Confusión
+
+```{r confusion-rl, echo=TRUE}
+# Matriz de confusión del modelo final
+cm_rl_final <- cm_rl_3
+
+cm_rl_df <- as.data.frame(cm_rl_final$table)
+colnames(cm_rl_df) <- c("Predicho", "Real", "Frecuencia")
+
+cm_rl_df <- transform(
+  cm_rl_df,
+  Porcentaje = ave(Frecuencia, Real, FUN = function(x) x / sum(x) * 100)
+)
+
+ggplot(cm_rl_df, aes(x = Predicho, y = Real, fill = Porcentaje)) +
+  geom_tile(color = "white", linewidth = 0.8) +
+  geom_text(aes(label = paste0(Frecuencia, "\n(", round(Porcentaje, 1), "%)")),
+            size = 3.2, color = "white", fontface = "bold") +
+  scale_fill_gradient(low = "#2c3e50", high = "#e74c3c",
+                      name = "% por clase\nreal") +
+  labs(
+    title    = "Matriz de Confusión — Modelo Final Regresión Logística Multinomial",
+    subtitle = "Porcentaje calculado sobre cada clase real (filas)",
+    x        = "Clase Predicha",
+    y        = "Clase Real"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x  = element_text(angle = 45, hjust = 1, face = "bold"),
+    axis.text.y  = element_text(face = "bold"),
+    panel.grid   = element_blank(),
+    plot.title   = element_text(face = "bold", size = 13),
+    plot.subtitle = element_text(color = "gray50", size = 10),
+    legend.position = "right"
+  )
+```
+
+## Análisis de Resultados
+
+**Clase dominante — Diversificado:** Al igual que en Random Forest, el modelo concentra 
+sus aciertos en la clase mayoritaria. La regresión logística multinomial, al asumir 
+linealidad entre predictores y log-odds, tiene menos flexibilidad para capturar 
+fronteras de decisión complejas entre clases solapadas.
+
+**Clases minoritarias:** "Postgrado" continúa siendo prácticamente invisible para el 
+modelo — con apenas 76 registros en todo el dataset, ningún algoritmo sin sobremuestreo 
+puede aprender sus patrones. "Básico" y "Primaria" muestran confusión elevada con 
+"Diversificado", patrón consistente con lo observado en Random Forest.
+
+**Comparación con Random Forest:** La regresión logística multinomial cumple su rol 
+de baseline estadístico: es interpretable y entrena rápido, pero su exactitud global 
+y F1 Macro son inferiores a los del modelo de ensamble. Esto confirma que la relación 
+entre las variables predictoras y el nivel educativo no es estrictamente lineal en el 
+espacio log-odds, y que Random Forest captura mejor esas no linealidades.
+
+**Sobreajuste:** La inclusión de `decay=0.01` en el Modelo 3 reduce la brecha entre 
+entrenamiento y prueba respecto al baseline, lo que indica que la regularización L2 
+es beneficiosa para este problema con variables categóricas de alta cardinalidad.
