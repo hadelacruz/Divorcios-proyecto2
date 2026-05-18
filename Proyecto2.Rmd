@@ -882,7 +882,8 @@ datos_test$eschom  <- droplevels(datos_test$eschom)
 
 frecuencias_dt <- table(datos_train$eschom)
 prior_dt       <- 1 / as.numeric(frecuencias_dt)
-prior_dt       <- prior_dt / sum(prior_dt)
+prior_dt <- prior_dt / sum(prior_dt)
+prior_dt <- prior_dt / sum(prior_dt)
 names(prior_dt) <- names(frecuencias_dt)
 
 cat("Probabilidades a priori asignadas por clase:\n")
@@ -899,7 +900,7 @@ el manejo del desbalance. El objetivo es encontrar el árbol que mejor generaliz
 sin caer en sobreajuste (árbol demasiado profundo) ni en subajuste (árbol trivial).
 
 
-```{r modelos-at, echo=TRUE, cache=False}
+```{r modelos-at, echo=TRUE, cache=TRUE}
 
 # Modelo 1: parametros por defecto, sin pesos
 
@@ -1020,8 +1021,7 @@ cm_dt_final   <- list(cm_dt_1,   cm_dt_2,   cm_dt_3)[[mejor_idx]]
 
 ## Discusión de Resultados y Matriz de Confusión
 
-A continuación se evalúa el modelo final sobre el conjunto de prueba, de manera
-equivalente a como se hizo en Random Forest y Regresión Logística Multinomial.
+A continuación se evalúa el modelo final sobre el conjunto de prueba, de manera.
 
 ```{r dt-confusion-plot, echo=TRUE}
 cm_dt_df <- as.data.frame(cm_dt_final$table)
@@ -1151,12 +1151,15 @@ se solapan con múltiples categorías adyacentes, lo que dificulta su clasificac
 para modelos lineales como para modelos basados en árboles.
 
 **Profundidad y sobreajuste:**
-El Modelo 1 (sin restricciones de profundidad) tiende a sobreajustar: aprende reglas
-muy específicas del conjunto de entrenamiento que no generalizan bien. Los Modelos 2
-y 3 mitigan esto mediante `maxdepth` y poda post-entrenamiento respectivamente, lo
-que se refleja en una menor brecha entre el rendimiento en entrenamiento y en prueba.
-La regla 1-SE del Modelo 3 garantiza parsimonia: selecciona el árbol más simple cuyo
-error de validación cruzada es estadísticamente equivalente al mínimo.
+"El Modelo 1, aunque sin restricciones explícitas de profundidad, no cayó en sobreajuste
+severo gracias al cp=0.01 que actúa como control interno. Su rendimiento superior en
+F1 Macro sugiere que, para este dataset, aprender los patrones de las clases mayoritarias
+sin distorsión por pesos es más efectivo que forzar atención a las minoritarias. 
+El Modelo 2 mejora la exactitud balanceada mediante maxdepth y pesos a priori. El Modelo 3, sin embargo, 
+colapsó en un árbol de nodo único: el cp óptimo de 0.12 seleccionado por la regla 1-SE
+resultó demasiado restrictivo dado el desbalance extremo introducido por los pesos a 
+priori de Postgrado, lo que impidió cualquier división."
+
 
 **Importancia de variables:**
 El árbol se apoya principalmente en la **escolaridad de la mujer** (`escmuj`) y la
