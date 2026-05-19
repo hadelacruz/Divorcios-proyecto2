@@ -1433,3 +1433,81 @@ técnicas de sobremuestreo (SMOTE) o ensambles balanceados para mitigar este
 trade-off.
 
 ---
+
+---
+
+# Conclusiones
+
+El presente proyecto abordó el problema de predecir el **nivel educativo del
+hombre** (`eschom`) a partir de variables demográficas disponibles en los
+registros de divorcios de Guatemala publicados por el INE, formulándolo como
+un problema de **clasificación multiclase** con seis categorías ordinales.
+
+## Sobre los datos y el preprocesamiento
+
+El dataset presentó dos desafíos principales que condicionaron todas las
+decisiones de modelado. Primero, un **desbalance de clases marcado**: la
+categoría "Diversificado" concentra aproximadamente el 40% de los registros,
+mientras que "Postgrado" representa apenas el 0.27%. Segundo, la naturaleza
+**mixta de las variables** — categóricas como el departamento y la etnia,
+y numéricas como la edad — requirió estrategias de preprocesamiento distintas
+para cada algoritmo. Ambos desafíos son consistentes con lo reportado en los
+antecedentes revisados para datasets de registros administrativos
+latinoamericanos.
+
+## Sobre los algoritmos y sus resultados
+
+Los tres algoritmos evaluados mostraron fortalezas y limitaciones complementarias:
+
+- **Random Forest** obtuvo el mayor F1 Macro y la mayor Exactitud Global,
+  confirmando su idoneidad para clasificación con variables mixtas y desbalance
+  moderado. Es el algoritmo recomendado para predecir el perfil educativo típico
+  dentro del contexto de divorcios en Guatemala.
+
+- **Regresión Logística Multinomial** logró la mayor Exactitud Balanceada gracias
+  al uso de pesos de clase, siendo el único modelo capaz de identificar casos de
+  "Postgrado" con un recall del 68.2%. Es la opción preferible cuando el objetivo
+  es no invisibilizar los perfiles educativos minoritarios.
+
+- **Árbol de Decisión** obtuvo el menor rendimiento predictivo de los tres, pero
+  aporta el mayor valor interpretativo al generar reglas explícitas sobre los
+  perfiles educativos. Sirve como complemento a Random Forest para comunicar
+  los patrones aprendidos a audiencias no técnicas.
+
+## Sobre la variable respuesta y su predictibilidad
+
+Los resultados confirman que el nivel educativo del hombre en registros de
+divorcio **es predecible** a partir de variables demográficas rutinarias, aunque
+con limitaciones. Las variables más informativas fueron consistentemente la
+**escolaridad de la mujer** — evidencia de homogamia educativa — y la **edad del
+hombre** como proxy de la cohorte generacional. La clase "Básico" resultó la más
+difícil de clasificar en los tres algoritmos, dado que sus perfiles demográficos
+se solapan con las clases adyacentes en la escala ordinal.
+
+## Limitaciones del estudio
+
+- **Clase "Postgrado" casi invisible**: con 76 registros en todo el dataset, ningún
+  algoritmo logra aprenderla con fiabilidad sin técnicas de sobremuestreo. Los
+  resultados para esta clase deben interpretarse con cautela.
+- **Variables disponibles**: el dataset del INE no incluye variables como ingreso
+  económico, zona urbana/rural o tipo de empleo, que probablemente mejorarían la
+  capacidad predictiva de los modelos.
+- **Causalidad vs. asociación**: los modelos identifican asociaciones estadísticas
+  entre variables demográficas y nivel educativo, pero no establecen relaciones
+  causales. Las conclusiones deben interpretarse en ese marco.
+
+## Trabajo futuro
+
+Como líneas de trabajo futuro se identifican las siguientes:
+
+- Aplicar técnicas de **sobremuestreo sintético (SMOTE)** para la clase "Postgrado"
+  y evaluar su impacto en el recall de clases minoritarias.
+- Explorar **modelos que aprovechen la naturaleza ordinal** de la variable respuesta
+  (como regresión logística ordinal) para capturar la estructura Ninguno < Primaria
+  < Básico < Diversificado < Universitario < Postgrado.
+- Incorporar datos de años más recientes del INE para evaluar si los patrones
+  educativos en divorcios han cambiado con el tiempo.
+- Evaluar el uso de **ensambles balanceados** (Balanced Random Forest o EasyEnsemble)
+  como alternativa a los pesos de clase.
+
+---
