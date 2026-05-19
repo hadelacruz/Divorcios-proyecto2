@@ -1668,3 +1668,43 @@ conjunto de prueba, lo que valida la metodología de partición estratificada
 utilizada y el preprocesamiento aplicado.
 
 ---
+
+## Visualización del Árbol de Decisión Final
+
+Una de las principales ventajas del Árbol de Decisión frente a los otros dos
+algoritmos es su **interpretabilidad directa**: las reglas de clasificación
+pueden leerse visualmente del diagrama. A continuación se presenta el árbol
+final seleccionado.
+
+```{r visualizacion-arbol, echo=TRUE}
+library(rpart.plot)
+
+rpart.plot(
+  dt_final,
+  type    = 4,        # nodos con etiquetas completas
+  extra   = 104,      # muestra probabilidad y porcentaje de registros por nodo
+  fallen.leaves = TRUE,
+  main    = "Árbol de Decisión Final — Nivel Educativo del Hombre",
+  cex     = 0.7,
+  box.palette = list(
+    "Ninguno"       = "#e74c3c",
+    "Primaria"      = "#e67e22",
+    "Básico"        = "#f1c40f",
+    "Diversificado" = "#27ae60",
+    "Universitario" = "#2980b9",
+    "Postgrado"     = "#8e44ad"
+  ),
+  shadow.col = "gray80"
+)
+```
+
+El diagrama muestra las variables y umbrales que el árbol utiliza para separar
+las clases. Los nodos hoja indican la clase predicha, la probabilidad estimada
+y el porcentaje de registros del conjunto de entrenamiento que caen en ese nodo.
+Consistentemente con los resultados de importancia de variables, **la escolaridad
+de la mujer** (`escmuj`) y **la edad del hombre** (`edadhom`) aparecen como los
+primeros nodos de división, lo que confirma que son las variables más
+discriminantes para determinar el perfil educativo dentro de los registros de
+divorcios en Guatemala.
+
+---
