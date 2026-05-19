@@ -1170,3 +1170,266 @@ y la edad actúa como proxy de la cohorte generacional, que a su vez refleja el 
 histórico a la educación en Guatemala.
 
 ---
+---
+
+# Comparación Final entre Algoritmos
+
+Una vez seleccionado el mejor modelo de cada uno de los tres algoritmos
+(Random Forest, Regresión Logística Multinomial y Árbol de Decisión), se procede
+a una comparación directa entre ellos sobre el conjunto de prueba. El objetivo es
+identificar cuál algoritmo resulta más adecuado para predecir el nivel educativo
+del hombre en registros de divorcios de Guatemala, considerando tanto el
+rendimiento global como el desempeño en clases minoritarias.
+
+## Métricas Comparativas de los Modelos Finales
+
+Se utilizan las mismas tres métricas que se han venido reportando en cada
+algoritmo para garantizar comparabilidad: **Exactitud Global**, **Exactitud
+Balanceada** y **F1 Macro**. Esta última es la métrica principal de decisión
+dado el marcado desbalance de clases en el dataset.
+
+```{r comparacion-final-algoritmos, echo=TRUE}
+# Predicciones de cada modelo final sobre el conjunto de prueba
+pred_rf_final  <- predict(rf_modelo_1, datos_test)
+pred_rl_final  <- predict(rl_modelo_2, datos_test)
+pred_dt_final_cmp <- pred_dt_final
+
+# Matrices de confusión de los modelos finales
+cm_rf_final <- confusionMatrix(pred_rf_final, datos_test$eschom)
+cm_rl_fin   <- cm_rl_2
+cm_dt_fin   <- cm_dt_final
+
+# Funciones auxiliares (reutilizadas de secciones anteriores)
+f1_macro_cmp <- function(cm) {
+  precision <- cm$byClass[, "Pos Pred Value"]
+  recall    <- cm$byClass[, "Sensitivity"]
+  f1        <- 2 * (precision * recall) / (precision + recall)
+  mean(f1, na.rm = TRUE)
+}
+
+bal_acc_cmp <- function(cm) mean(cm$byClass[, "Balanced Accuracy"], na.rm = TRUE)
+
+# Tabla comparativa final
+comparacion_algoritmos <- data.frame(
+  Algoritmo = c(
+    "Random Forest (Modelo 1)",
+    "Regresión Logística Multinomial (Modelo 2 - Pesos)",
+    "Árbol de Decisión (Modelo Final)"
+  ),
+  Exactitud_Global = c(
+    cm_rf_final$overall["Accuracy"],
+    cm_rl_fin$overall["Accuracy"],
+    cm_dt_fin$overall["Accuracy"]
+  ),
+  Exactitud_Balanceada = c(
+    bal_acc_cmp(cm_rf_final),
+    bal_acc_cmp(cm_rl_fin),
+    bal_acc_cmp(cm_dt_fin)
+  ),
+  F1_Macro = c(
+    f1_macro_cmp(cm_rf_final),
+    f1_macro_cmp(cm_rl_fin),
+    f1_macro_cmp(cm_dt_fin)
+  )
+)
+
+knitr::kable(
+  comparacion_algoritmos,
+  digits  = 4,
+  caption = "Comparación Final entre los Tres Algoritmos sobre el Conjunto de Prueba"
+)
+```
+
+## Visualización Comparativa
+
+```{r grafico-comparacion-algoritmos, echo=TRUE}
+library(tidyr)
+
+comparacion_largo <- comparacion_algoritmos %>%
+  pivot_longer(
+    cols      = c(Exactitud_Global, Exactitud_Balanceada, F1_Macro),
+    names_to  = "Metrica",
+    values_to = "Valor"
+  ) %>%
+  mutate(
+    Metrica = recode(Metrica,
+      Exactitud_Global     = "Exactitud Global",
+      Exactitud_Balanceada = "Exactitud Balanceada",
+      F1_Macro             = "F1 Macro"
+    ),
+    Algoritmo = recode(Algoritmo,
+      "Random Forest (Modelo 1)"                            = "Random Forest",
+      "Regresión Logística Multinomial (Modelo 2 - Pesos)"  = "Reg. Logística",
+      "Árbol de Decisión (Modelo Final)"                    = "Árbol de Decisión"
+    )
+  )
+
+ggplot(comparacion_largo,
+       aes(x = Metrica, y = Valor, fill = Algoritmo)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  geom_text(
+    aes(label = sprintf("%.3f", Valor)),
+    position = position_dodge(width = 0.8),
+    vjust    = -0.4,
+    size     = 3.2,
+    fontface = "bold"
+  ) +
+  scale_fill_manual(values = c(
+    "Random Forest"     = "#27ae60",
+    "Reg. Logística"    = "#2980b9",
+    "Árbol de Decisión" = "#e67e22"
+  )) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+  labs(
+    title    = "Comparación de Métricas entre los Tres Algoritmos",
+    subtitle = "Evaluación sobre el conjunto de prueba (30% del dataset)",
+    x        = "Métrica",
+    y        = "Valor",
+    fill     = "Algoritmo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title      = element_text(face = "bold", size = 13),
+    plot.subtitle   = element_text(color = "gray50", size = 10),
+    axis.text.x     = element_text(face = "bold"),
+    legend.position = "bottom"
+  )
+```
+
+## Comparación del Recall por Clase
+
+Más allá de las métricas agregadas, resulta especialmente relevante comparar el
+**recall (sensibilidad) por clase** entre los tres algoritmos, ya que el principal
+desafío del problema es la predicción de las clases minoritarias.
+
+```{r recall-por-clase, echo=TRUE}
+# Extracción del recall (sensibilidad) por clase para cada modelo
+recall_rf <- cm_rf_final$byClass[, "Sensitivity"]
+recall_rl <- cm_rl_fin$byClass[, "Sensitivity"]
+recall_dt <- cm_dt_fin$byClass[, "Sensitivity"]
+
+clases <- gsub("Class: ", "", names(recall_rf))
+
+recall_comparacion <- data.frame(
+  Clase             = clases,
+  Random_Forest     = round(recall_rf, 3),
+  Reg_Logistica     = round(recall_rl, 3),
+  Arbol_Decision    = round(recall_dt, 3)
+)
+rownames(recall_comparacion) <- NULL
+
+knitr::kable(
+  recall_comparacion,
+  caption = "Recall (Sensibilidad) por Clase y Algoritmo"
+)
+```
+
+```{r grafico-recall-clases, echo=TRUE}
+recall_largo <- recall_comparacion %>%
+  pivot_longer(
+    cols      = c(Random_Forest, Reg_Logistica, Arbol_Decision),
+    names_to  = "Algoritmo",
+    values_to = "Recall"
+  ) %>%
+  mutate(
+    Algoritmo = recode(Algoritmo,
+      Random_Forest  = "Random Forest",
+      Reg_Logistica  = "Reg. Logística",
+      Arbol_Decision = "Árbol de Decisión"
+    )
+  )
+
+ggplot(recall_largo, aes(x = Clase, y = Recall, fill = Algoritmo)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  scale_fill_manual(values = c(
+    "Random Forest"     = "#27ae60",
+    "Reg. Logística"    = "#2980b9",
+    "Árbol de Decisión" = "#e67e22"
+  )) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+  labs(
+    title    = "Recall por Clase para Cada Algoritmo",
+    subtitle = "Capacidad de cada modelo para identificar correctamente cada nivel educativo",
+    x        = "Nivel Educativo (Clase Real)",
+    y        = "Recall (Sensibilidad)",
+    fill     = "Algoritmo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title      = element_text(face = "bold", size = 13),
+    plot.subtitle   = element_text(color = "gray50", size = 10),
+    axis.text.x     = element_text(angle = 30, hjust = 1, face = "bold"),
+    legend.position = "bottom"
+  )
+```
+
+## Análisis Comparativo
+
+**Random Forest — el de mejor rendimiento global:**
+Random Forest obtiene la mayor Exactitud Global y el mayor F1 Macro de los tres
+algoritmos, lo que confirma su capacidad para capturar interacciones no lineales
+entre las variables demográficas y el nivel educativo. Este resultado es
+consistente con los antecedentes revisados (Mohammadinasab et al., 2023;
+Sanchez-Pinto et al., 2023), donde Random Forest reporta consistentemente los
+mejores resultados en problemas de clasificación con variables sociodemográficas
+mixtas. Su principal fortaleza es el equilibrio entre todas las clases mayoritarias
+e intermedias ("Diversificado", "Primaria", "Ninguno"), aunque falla por completo
+en la clase "Postgrado".
+
+**Regresión Logística Multinomial — el mejor para clases minoritarias:**
+A pesar de obtener la menor Exactitud Global, la regresión logística con pesos de
+clase logra la mayor Exactitud Balanceada de los tres algoritmos, gracias a su
+capacidad para identificar correctamente las clases minoritarias. Es el único
+modelo que logra un recall significativo en "Postgrado" (68.2%), mientras que
+Random Forest y el Árbol no aciertan ningún caso o muy pocos. Esto se debe a
+que los pesos inversos a la frecuencia operan de forma más efectiva sobre un
+modelo lineal con coeficientes interpretables que sobre modelos basados en
+particiones del espacio de predictores.
+
+**Árbol de Decisión — el más interpretable, pero el de menor rendimiento:**
+El árbol obtiene el menor F1 Macro y la menor Exactitud Global de los tres
+algoritmos. Esto es esperable: un árbol individual es más propenso al sobreajuste
+y carece de la capacidad de promediar predicciones que tiene un ensamble como
+Random Forest. Sin embargo, mantiene su valor como modelo interpretable, ya que
+permite extraer reglas explícitas sobre los perfiles educativos. En este sentido,
+funciona como complemento a Random Forest: ofrece la base lógica visible que el
+ensamble esconde.
+
+**Trade-off entre exactitud global y equidad entre clases:**
+La comparación deja claro un trade-off central del problema. Random Forest
+maximiza el acierto global pero ignora la clase minoritaria "Postgrado".
+La regresión logística distribuye mejor los aciertos entre clases pero sacrifica
+exactitud global. El Árbol no destaca en ninguna dimensión, aunque ofrece
+interpretabilidad. La elección del "mejor" algoritmo depende, por tanto, del
+objetivo del análisis: si el interés es predecir perfiles educativos típicos,
+Random Forest es la elección; si el interés es no invisibilizar las clases
+minoritarias —como Postgrado o Ninguno—, la regresión logística con pesos
+resulta más adecuada.
+
+## Conclusión: Selección del Mejor Algoritmo
+
+Considerando el contexto del problema —predecir el nivel educativo del hombre
+en registros de divorcios de Guatemala con clases marcadamente desbalanceadas—
+y priorizando el **F1 Macro** como métrica principal por su robustez frente al
+desbalance, **Random Forest se selecciona como el mejor algoritmo** para este
+problema. Esta decisión se sustenta en:
+
+1. **Mejor F1 Macro**: balance superior entre precisión y recall promediado entre
+   todas las clases.
+2. **Mejor Exactitud Global**: aprende patrones útiles que generalizan al conjunto
+   de prueba.
+3. **Consistencia con la literatura**: coincide con los resultados reportados en
+   los antecedentes revisados para problemas de clasificación con variables
+   sociodemográficas.
+4. **Importancia de variables interpretable**: aunque el modelo individual es
+   menos transparente que un árbol, ofrece una medida cuantitativa de qué
+   variables son más relevantes para la predicción.
+
+No obstante, se reconoce que para análisis donde la equidad entre clases sea
+prioritaria —por ejemplo, estudios enfocados en perfiles educativos extremos
+como Postgrado o Ninguno—, la **Regresión Logística Multinomial con pesos de
+clase** sería la opción preferible. Como trabajo futuro, se recomienda explorar
+técnicas de sobremuestreo (SMOTE) o ensambles balanceados para mitigar este
+trade-off.
+
+---
