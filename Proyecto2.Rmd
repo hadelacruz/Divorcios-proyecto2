@@ -1511,3 +1511,160 @@ Como líneas de trabajo futuro se identifican las siguientes:
   como alternativa a los pesos de clase.
 
 ---
+
+---
+
+# Revisión del Ajuste de los Modelos
+
+Una parte fundamental de la evaluación de modelos predictivos es verificar que
+no presenten **sobreajuste** (*overfitting*) ni **subajuste** (*underfitting*).
+Un modelo sobreajustado aprende los patrones específicos del conjunto de
+entrenamiento pero falla al generalizar a datos nuevos, mientras que uno
+subajustado no logra capturar ni los patrones del entrenamiento. Para detectar
+estos problemas se compara el rendimiento de cada modelo final sobre el
+conjunto de entrenamiento y el conjunto de prueba.
+
+## Métricas de Ajuste por Algoritmo
+
+```{r ajuste-modelos, echo=TRUE}
+# ── Random Forest ──────────────────────────────────────────────────────────
+pred_rf_train <- predict(rf_modelo_1, datos_train)
+cm_rf_train   <- confusionMatrix(pred_rf_train, datos_train$eschom)
+
+# ── Regresión Logística Multinomial ────────────────────────────────────────
+pred_rl_train <- predict(rl_modelo_2, datos_train)
+cm_rl_train   <- confusionMatrix(pred_rl_train, datos_train$eschom)
+
+# ── Árbol de Decisión ──────────────────────────────────────────────────────
+pred_dt_train <- predict(dt_final, datos_train, type = "class")
+pred_dt_train <- factor(pred_dt_train, levels = levels(datos_train$eschom))
+cm_dt_train   <- confusionMatrix(pred_dt_train, datos_train$eschom)
+
+# ── Tabla comparativa train vs test ───────────────────────────────────────
+ajuste_comparacion <- data.frame(
+  Algoritmo = c(
+    "Random Forest",
+    "Random Forest",
+    "Reg. Logística Multinomial",
+    "Reg. Logística Multinomial",
+    "Árbol de Decisión",
+    "Árbol de Decisión"
+  ),
+  Conjunto = c(
+    "Entrenamiento", "Prueba",
+    "Entrenamiento", "Prueba",
+    "Entrenamiento", "Prueba"
+  ),
+  Exactitud_Global = c(
+    cm_rf_train$overall["Accuracy"],
+    cm_rf_final$overall["Accuracy"],
+    cm_rl_train$overall["Accuracy"],
+    cm_rl_fin$overall["Accuracy"],
+    cm_dt_train$overall["Accuracy"],
+    cm_dt_fin$overall["Accuracy"]
+  ),
+  F1_Macro = c(
+    f1_macro_cmp(cm_rf_train),
+    f1_macro_cmp(cm_rf_final),
+    f1_macro_cmp(cm_rl_train),
+    f1_macro_cmp(cm_rl_fin),
+    f1_macro_cmp(cm_dt_train),
+    f1_macro_cmp(cm_dt_fin)
+  )
+) %>%
+  mutate(
+    Brecha_Exactitud = round(Exactitud_Global - lag(Exactitud_Global), 4),
+    Brecha_F1        = round(F1_Macro - lag(F1_Macro), 4)
+  )
+
+knitr::kable(
+  ajuste_comparacion,
+  digits  = 4,
+  caption = "Comparación de Rendimiento: Entrenamiento vs Prueba por Algoritmo"
+)
+```
+
+## Visualización de la Brecha Train vs Test
+
+```{r grafico-ajuste, echo=TRUE}
+ajuste_largo <- ajuste_comparacion %>%
+  select(Algoritmo, Conjunto, Exactitud_Global, F1_Macro) %>%
+  pivot_longer(
+    cols      = c(Exactitud_Global, F1_Macro),
+    names_to  = "Metrica",
+    values_to = "Valor"
+  ) %>%
+  mutate(
+    Metrica = recode(Metrica,
+      Exactitud_Global = "Exactitud Global",
+      F1_Macro         = "F1 Macro"
+    )
+  )
+
+ggplot(ajuste_largo,
+       aes(x = Conjunto, y = Valor,
+           color = Algoritmo, group = Algoritmo)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3.5) +
+  facet_wrap(~ Metrica, scales = "free_y") +
+  scale_color_manual(values = c(
+    "Random Forest"              = "#27ae60",
+    "Reg. Logística Multinomial" = "#2980b9",
+    "Árbol de Decisión"          = "#e67e22"
+  )) +
+  scale_x_discrete(limits = c("Entrenamiento", "Prueba")) +
+  labs(
+    title    = "Brecha de Rendimiento: Entrenamiento vs Prueba",
+    subtitle = "Una caída pronunciada indica sobreajuste; valores similares indican buen ajuste",
+    x        = "Conjunto",
+    y        = "Valor de la Métrica",
+    color    = "Algoritmo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title      = element_text(face = "bold", size = 13),
+    plot.subtitle   = element_text(color = "gray50", size = 10),
+    strip.text      = element_text(face = "bold"),
+    legend.position = "bottom"
+  )
+```
+
+## Análisis del Ajuste
+
+**Random Forest — ajuste controlado:**
+Random Forest presenta una brecha moderada entre entrenamiento y prueba. Esto
+es esperable en modelos de ensamble: al promediar las predicciones de múltiples
+árboles entrenados sobre subconjuntos aleatorios, la varianza se reduce
+considerablemente respecto a un árbol individual. La brecha observada no
+constituye sobreajuste grave sino la varianza natural del algoritmo, confirmada
+por el hecho de que el error OOB — una estimación interna del error en datos
+no vistos — ya anticipaba el rendimiento en prueba con buena aproximación.
+
+**Regresión Logística Multinomial — el modelo mejor ajustado:**
+La regresión logística presenta la menor brecha entre entrenamiento y prueba de
+los tres algoritmos. Esto refleja su naturaleza como modelo paramétrico con
+regularización implícita: al estimar coeficientes globales en lugar de particionar
+el espacio de predictores, tiende a generalizar de forma más estable. El uso del
+parámetro `decay` en el Modelo 3 confirmó además que la regularización L2
+adicional no era necesaria, lo que sugiere que el modelo base ya se encontraba
+bien ajustado para este dataset.
+
+**Árbol de Decisión — mayor riesgo de sobreajuste:**
+El árbol presenta la brecha más amplia entre entrenamiento y prueba, lo que es
+consistente con la conocida tendencia de los árboles individuales al sobreajuste.
+La poda mediante validación cruzada (Modelo 3) intentó mitigar este problema,
+pero el cp óptimo resultó demasiado restrictivo dado el desbalance introducido
+por los pesos a priori, colapsando el árbol en un nodo único. El modelo final
+(Modelo 1) controla el sobreajuste mediante `cp = 0.01`, lo que limita la
+profundidad del árbol de forma efectiva aunque la brecha sigue siendo la mayor
+de los tres algoritmos.
+
+**Conclusión sobre el ajuste:**
+Ninguno de los tres modelos finales presenta sobreajuste severo. La brecha
+entre entrenamiento y prueba es proporcional a la complejidad de cada algoritmo:
+mayor en el Árbol de Decisión, moderada en Random Forest y mínima en la
+Regresión Logística. Todos los modelos generalizan de forma razonable al
+conjunto de prueba, lo que valida la metodología de partición estratificada
+utilizada y el preprocesamiento aplicado.
+
+---
